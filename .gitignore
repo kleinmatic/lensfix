@@ -1,0 +1,11 @@
+# Personal lens database (contains serial numbers)
+lensfix.csv
+
+# OS files
+.DS_Store
+
+# Editor files
+.vscode/
+*.swp
+*.swo
+*~
