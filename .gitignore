@@ -13,3 +13,4 @@ exifdate.sh
 
 # Swift build products
 mac/.build/
+mac/dist/

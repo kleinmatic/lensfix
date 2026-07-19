@@ -31,9 +31,43 @@ swift run          # debug build, launches the app
 
 For a faster build: `swift run -c release`.
 
+## Build a double-clickable app
+
+To produce a real `Lensfix.app` you can keep in `/Applications` or the Dock:
+
+```bash
+cd mac
+./build-app.sh          # -> dist/Lensfix.app
+open dist/Lensfix.app    # or double-click it in Finder
+```
+
+`build-app.sh` builds the release binary, assembles the `.app` bundle
+(`Info.plist` + generated icon), and **ad-hoc code-signs** it. This needs only
+the Command Line Tools (`swift`, `codesign`, `iconutil`) — not full Xcode. The
+app is ignored by git (`mac/dist/`); rebuild it any time from source.
+
+Because it's ad-hoc signed and built locally, it launches without a Gatekeeper
+prompt on *this* machine.
+
+## Sharing the app with other people
+
+Ad-hoc signing is fine for your own Mac, but if you send `Lensfix.app` to
+someone else, macOS Gatekeeper will flag it as coming from an unidentified
+developer (they can still run it via right-click → Open). To distribute without
+that friction you need:
+
+1. An **Apple Developer account** ($99/yr) and a **Developer ID Application** certificate
+2. Sign with it: `codesign --force --options runtime --sign "Developer ID Application: …" dist/Lensfix.app`
+3. **Notarize** with `xcrun notarytool submit` (notarytool ships with full Xcode) and `xcrun stapler staple dist/Lensfix.app`
+4. Ship it as a zip or DMG
+
+Also note: the app expects `exiftool` on the machine (Homebrew locations are
+auto-detected). A recipient without it sees a banner; bundling a standalone
+`exiftool` inside the app is a possible future step.
+
 ## Not yet built (roadmap)
 
-- Lens **presets** (the CLI's nickname/CSV database, reborn as a GUI feature)
 - Dated `ImageDescription` stamp for self-documenting files (CLI parity)
-- Bundled `exiftool` + a signed/notarized `.app` for sharing (needs Xcode)
+- Bundled `exiftool` so the app is self-contained
+- Developer ID signing + notarization for frictionless distribution
 - Recursive folder scanning (currently top-level only)
