@@ -10,3 +10,6 @@ lensfix.csv
 *.swo
 *~
 exifdate.sh
+
+# Swift build products
+mac/.build/

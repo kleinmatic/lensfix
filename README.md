@@ -1,10 +1,23 @@
 # lensfix
 
-A collection of EXIF metadata tools for photographers who shoot with vintage or manual lenses that don't communicate electronically with the camera body.
+EXIF metadata tools for photographers who shoot with vintage or manual lenses that don't communicate electronically with the camera body. Includes a set of command-line scripts and a native macOS app.
 
 Requires [exiftool](https://exiftool.org/).
 
-## Tools
+## Mac app (GUI)
+
+A native SwiftUI app for tagging a folder of photos visually: open a folder or drop in files, see which shots are missing a lens (they get a red badge), group-select them, load a lens from your `lensfix.csv` (or type the fields in), and apply to the whole selection. The right pane shows the selected photo's camera body and existing lens metadata; a green seal marks the photos you've tagged in the session.
+
+It's a **pre-import** workflow — fix the files, then import into Lightroom — so there's no plugin, no catalog round-trip, and no SDK limitations to fight. It uses the same `exiftool` fields as the CLI and can read the same `lensfix.csv` lens database.
+
+See [`mac/README.md`](mac/README.md) for details and the roadmap. Quick start:
+
+```bash
+cd mac
+swift run
+```
+
+## Command-line tools
 
 ### lensfix.py
 
