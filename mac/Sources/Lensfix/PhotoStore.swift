@@ -20,11 +20,30 @@ final class PhotoStore: ObservableObject {
     // Lens database (shared with the CLI's lensfix.csv)
     @Published var lensPresets: [LensPreset] = []
     @Published var lensCSVName: String?
+    // Set when a previously-chosen CSV has gone missing, so the UI can say so
+    // instead of silently falling back to the bundled example.
+    @Published var lensCSVMissingNote: String?
 
     // The editable lens form. Mirrors the selection's existing values until the
     // user starts editing (formDirty), after which their input is preserved.
     @Published var form = LensMetadata()
     private var formDirty = false
+
+    // Progress of the background metadata read, shown in the status bar while a
+    // batch of files is still being read (nil when idle).
+    @Published var readProgress: TaskProgress?
+    private var readsDone = 0
+    private var readsTotal = 0
+
+    // Progress of a tagging (write) operation, shown while files are being
+    // written (nil when idle).
+    @Published var writeProgress: TaskProgress?
+
+    struct TaskProgress: Equatable {
+        var done: Int
+        var total: Int
+        var fraction: Double { total == 0 ? 0 : Double(done) / Double(total) }
+    }
 
     private let exiftool: ExifToolService?
 
@@ -42,13 +61,30 @@ final class PhotoStore: ObservableObject {
     // MARK: - Lens database
 
     func reloadLensDatabase() {
-        guard let url = LensDatabase.resolvePath() else {
+        lensCSVMissingNote = nil
+        let fm = FileManager.default
+
+        // A path the user picked explicitly wins — unless it's gone missing, in
+        // which case forget it and note that, rather than silently reverting to
+        // the bundled example as if nothing happened.
+        if let saved = LensDatabase.savedPath {
+            if fm.fileExists(atPath: saved) {
+                let url = URL(fileURLWithPath: saved)
+                lensPresets = LensDatabase.load(from: url)
+                lensCSVName = url.lastPathComponent
+                return
+            }
+            lensCSVMissingNote = "Previous lens CSV not found (\(URL(fileURLWithPath: saved).lastPathComponent))"
+            LensDatabase.clearSavedPath()
+        }
+
+        if let url = LensDatabase.defaultPath() {
+            lensPresets = LensDatabase.load(from: url)
+            lensCSVName = url.lastPathComponent
+        } else {
             lensPresets = []
             lensCSVName = nil
-            return
         }
-        lensPresets = LensDatabase.load(from: url)
-        lensCSVName = url.lastPathComponent
     }
 
     func setLensCSV(_ url: URL) {
@@ -97,14 +133,44 @@ final class PhotoStore: ObservableObject {
             for t in targets { t.isLoadingMeta = false }
             return
         }
-        let urls = targets.map { $0.url }
+        // Read in chunks rather than one opaque exiftool call so the status-bar
+        // progress bar advances and badges appear in waves. Chunks accumulate
+        // into a single progress total across overlapping open() calls.
+        readsTotal += targets.count
+        updateReadProgress()
+
         Task {
-            let readouts = await Task.detached { exiftool.read(urls: urls) }.value
-            for item in targets {
-                let key = item.url.standardizedFileURL.path
-                item.readout = readouts[key] ?? LensReadout()
-                item.isLoadingMeta = false
+            let chunkSize = 24
+            for start in stride(from: 0, to: targets.count, by: chunkSize) {
+                let chunk = Array(targets[start ..< min(start + chunkSize, targets.count)])
+                let urls = chunk.map { $0.url }
+                let readouts = await Task.detached { exiftool.read(urls: urls) }.value
+                for item in chunk {
+                    let key = item.url.standardizedFileURL.path
+                    item.readout = readouts[key] ?? LensReadout()
+                    item.isLoadingMeta = false
+                }
+                readsDone += chunk.count
+                updateReadProgress()
+                // `readout`/`needsLens` live on each PhotoItem, so mutating them
+                // only refreshes the grid cells. Counts and toolbar/status state
+                // that read through `items` (untaggedCount, taggedCount) are
+                // derived on the store, so nudge the store to re-publish or they
+                // stay stale at their pre-load values (e.g. "0 need lens").
+                objectWillChange.send()
             }
+        }
+    }
+
+    /// Publish the current read progress, clearing it (and resetting the running
+    /// totals) once every in-flight file has been read.
+    private func updateReadProgress() {
+        if readsDone >= readsTotal {
+            readsDone = 0
+            readsTotal = 0
+            readProgress = nil
+        } else {
+            readProgress = TaskProgress(done: readsDone, total: readsTotal)
         }
     }
 
@@ -214,6 +280,11 @@ final class PhotoStore: ObservableObject {
         }
         for item in selectedItems {
             guard let readout = item.readout else { continue }
+            // A photo that still needs a lens carries only camera placeholders
+            // (e.g. FocalLength 0, MaxApertureValue 1 that an adapted lens
+            // leaves behind), not real lens metadata — filling those in isn't an
+            // overwrite. Only warn about photos that already have a real lens.
+            guard readout.hasFocalLength else { continue }
             for field in fieldsToWrite {
                 let existing = readout.existingValue(forField: field).trimmingCharacters(in: .whitespaces)
                 let incoming = form.value(for: field).trimmingCharacters(in: .whitespaces)
@@ -234,26 +305,34 @@ final class PhotoStore: ObservableObject {
         guard !targets.isEmpty, metadata.hasAnyValue else { return }
 
         isBusy = true
-        status = "Tagging \(targets.count) photo\(targets.count == 1 ? "" : "s")…"
+        let total = targets.count
+        status = "Tagging \(total) photo\(total == 1 ? "" : "s")…"
+        writeProgress = TaskProgress(done: 0, total: total)
         let urls = targets.map { $0.url }
 
         Task {
-            let failures = await Task.detached { () -> [WriteFailure] in
-                var problems: [WriteFailure] = []
-                for url in urls {
+            // Write one file at a time so the progress bar can advance after each
+            // (exiftool writes a single file per call regardless, so this adds no
+            // extra process spawns over the old batch loop).
+            var failures: [WriteFailure] = []
+            for (index, url) in urls.enumerated() {
+                let failure = await Task.detached { () -> WriteFailure? in
                     do {
                         try exiftool.write(metadata, to: url, keepBackup: keepBackup)
+                        return nil
                     } catch {
-                        problems.append(WriteFailure(path: url.standardizedFileURL.path,
-                                                     message: error.localizedDescription))
+                        return WriteFailure(path: url.standardizedFileURL.path,
+                                            message: error.localizedDescription)
                     }
-                }
-                return problems
-            }.value
+                }.value
+                if let failure { failures.append(failure) }
+                writeProgress = TaskProgress(done: index + 1, total: total)
+            }
             let failedPaths = Set(failures.map { $0.path })
 
             // Re-read so badges and "current lens" reflect the new state, and
             // flag the successfully-written photos as changed this session.
+            status = "Reading back \(total) photo\(total == 1 ? "" : "s")…"
             let readouts = await Task.detached { exiftool.read(urls: urls) }.value
             for item in targets {
                 let key = item.url.standardizedFileURL.path
@@ -261,8 +340,9 @@ final class PhotoStore: ObservableObject {
                 if !failedPaths.contains(key) { item.wasTagged = true }
             }
 
+            writeProgress = nil
             isBusy = false
-            let ok = targets.count - failedPaths.count
+            let ok = total - failedPaths.count
             if failures.isEmpty {
                 status = "Tagged \(ok) photo\(ok == 1 ? "" : "s")."
             } else {

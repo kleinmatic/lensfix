@@ -18,14 +18,21 @@ enum LensDatabase {
     /// UserDefaults key remembering a CSV location the user picked explicitly.
     static let savedPathKey = "lensCSVPath"
 
-    /// Resolve the CSV path: a user-chosen path wins, otherwise look next to
-    /// the repo (works when running via `swift run` from the `mac/` dir).
-    static func resolvePath() -> URL? {
+    /// A CSV location the user picked explicitly, if any. May no longer exist —
+    /// callers should verify before use so a stale path can be surfaced/cleared.
+    static var savedPath: String? {
+        UserDefaults.standard.string(forKey: savedPathKey)
+    }
+
+    /// Forget a user-picked CSV path (e.g. once it's found to be missing).
+    static func clearSavedPath() {
+        UserDefaults.standard.removeObject(forKey: savedPathKey)
+    }
+
+    /// The default CSV next to the repo, used when the user hasn't picked one
+    /// (works when running via `swift run` from the `mac/` dir or the repo root).
+    static func defaultPath() -> URL? {
         let fm = FileManager.default
-        if let saved = UserDefaults.standard.string(forKey: savedPathKey),
-           fm.fileExists(atPath: saved) {
-            return URL(fileURLWithPath: saved)
-        }
         let cwd = fm.currentDirectoryPath
         let candidates = [
             "\(cwd)/lensfix.csv",            // running from repo root

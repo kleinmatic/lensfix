@@ -75,24 +75,38 @@ struct LensFormView: View {
     // MARK: - Lens pull-down
 
     private var lensPicker: some View {
-        HStack {
-            Menu {
-                if store.lensPresets.isEmpty {
-                    Text("No lenses in database").foregroundStyle(.secondary)
-                } else {
-                    ForEach(store.lensPresets) { preset in
-                        Button(preset.displayName) { store.loadPreset(preset.metadata) }
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Menu {
+                    if store.lensPresets.isEmpty {
+                        Text("No lenses in database").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(store.lensPresets) { preset in
+                            Button(preset.displayName) { store.loadPreset(preset.metadata) }
+                        }
                     }
+                    Divider()
+                    Button("Clear fields") { store.clearForm() }
+                    Button("Choose lens CSV…") { chooseCSV() }
+                } label: {
+                    Label(pickerLabel, systemImage: "camera.aperture")
                 }
-                Divider()
-                Button("Clear fields") { store.clearForm() }
-                Button("Choose lens CSV…") { chooseCSV() }
-            } label: {
-                Label(pickerLabel, systemImage: "camera.aperture")
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                Spacer()
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            Spacer()
+
+            if let note = store.lensCSVMissingNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .help("Pick another CSV with “Choose lens CSV…”")
+            } else if let name = store.lensCSVName {
+                Text(name)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help("Lens database currently loaded")
+            }
         }
     }
 

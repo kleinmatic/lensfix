@@ -85,7 +85,25 @@ struct ContentView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Spacer()
-            if !store.items.isEmpty {
+            if let progress = store.writeProgress {
+                HStack(spacing: 8) {
+                    ProgressView(value: progress.fraction)
+                        .frame(width: 120)
+                    Text("Tagging \(progress.done)/\(progress.total)…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            } else if let progress = store.readProgress {
+                HStack(spacing: 8) {
+                    ProgressView(value: progress.fraction)
+                        .frame(width: 120)
+                    Text("Reading \(progress.done)/\(progress.total)…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            } else if !store.items.isEmpty {
                 Text("\(store.selection.count) selected · \(store.untaggedCount) need lens")
                     .font(.callout)
                     .foregroundStyle(.secondary)
